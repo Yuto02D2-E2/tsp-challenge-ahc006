@@ -1,6 +1,9 @@
-src/archive/
+src/archives/
 src/given_tools/*
 !src/given_tools/README.md
 !src/given_tools/in/
 venv/
 __pycache__/
+*.exe
+*.out
+*.bin
