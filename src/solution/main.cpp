@@ -10,16 +10,29 @@ const bool LOCAL = true;
 const bool LOCAL = false;
 #endif
 
-// print out iterator object (sep=",",  end="\n")
-#define dump(iter_) print__(#iter_, iter_)
-namespace {
+namespace writer {
+/* print (iter, sep=",", end="\n") */
 template <typename T>
-void print__(const std::string& name_, const T& iter_) {
-    std::cout << name_ << ":{";
-    std::copy(iter_.begin(), iter_.end(), std::ostream_iterator<decltype(*iter_.begin())>(std::cout, ","));
+void print(const T& iter_, const std::string& sep_ = ",", const std::string& end_ = "\n") {
+    std::copy(iter_.begin(), iter_.end(), std::ostream_iterator<decltype(*iter_.begin())>(std::cout, sep_.c_str()));
+    std::cout << end_;
+    std::flush(std::cout);
+}
+/* print full (iter, msg="", sep=",") */
+template <typename T>
+void printf(const T& iter_, const std::string& info_ = "", const std::string& sep_ = ",") {
+    std::cout << info_ << ":{";
+    writer::print(iter_, sep_, "");
     std::cout << "}" << std::endl;
 }
-}  // namespace
+/* print initialize list (init_list, msg="", sep=",") */
+template <typename T>
+void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "", const std::string& sep_ = ",") {
+    std::cout << info_ << ":{";
+    writer::print(iter_, sep_, "");
+    std::cout << "}" << std::endl;
+}
+}  // namespace writer
 
 // 座標(0-indexed)
 struct Point {
@@ -200,19 +213,16 @@ public:
         if (LOCAL) {
             cout << "[result]" << endl;
             cout << "orders len:" << orders_id_.size() << endl;
-            dump(orders_id_);
-            cout << "tour len:" << job.tour.size() << endl;
-            dump(tour_);
+            writer::printf(orders_id_, "orders id");
+            cout << "tour len:" << tour_.size() / 2 << endl;
+            writer::printf(tour_, "tour");
             cout << "score:" << get_current_score() << endl;
             cout << "objective value:" << job.obj << endl;
         } else {
             cout << orders_id_.size() << " ";
-            std::copy(orders_id_.begin(), orders_id_.end(),
-                      std::ostream_iterator<decltype(*orders_id_.begin())>(std::cout, " "));
-            cout << endl;
-            cout << job.tour.size() << " ";
-            std::copy(tour_.begin(), tour_.end(), std::ostream_iterator<decltype(*tour_.begin())>(std::cout, " "));
-            cout << endl;
+            writer::print(orders_id_, " ");
+            cout << tour_.size() / 2 << " ";
+            writer::print(tour_, " ");
         }
         return;
     }
@@ -286,7 +296,7 @@ private:
         }
         if (LOCAL) {
             for (auto one_cluster : clusters) {
-                dump(one_cluster);
+                writer::printf(one_cluster, "one cluster");
             }
         }
         return clusters;
