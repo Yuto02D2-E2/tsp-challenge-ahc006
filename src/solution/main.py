@@ -1,14 +1,22 @@
 import sys
 import time
 import random
+import dataclasses
+
+# k-means test
+import numpy as np
+from sklearn.cluster import KMeans
+# import seaborn as sns
+# import matplotlib.pyplot as plt
 
 
 class Data:
     def __init__(self) -> None:
+        # map size (width=height)
+        self.MAP_SIZE: int = 800
         # office coordinate: 本社の座標/start/goal -> tuple(x, y)
         self.OFFICE_COORD: tuple = (400, 400)
         # threshold: 閾値
-        self.THRESHOLD = 200
         self.ALL_ORDER_NUM: int = 1000
         self.ORDER_NUM: int = 50
         # tour length = order_num * 2(from/to) + 2(start/end)
@@ -30,6 +38,12 @@ class Data:
         return
 
 
+@dataclasses.dataclass
+class Order:
+    id: int = -1
+    dest: str = "office"
+
+
 class Job:
     """ 解の単位 """
 
@@ -41,8 +55,8 @@ class Job:
         """
         # selected orders id: 受ける注文のid列(1-indexed)
         self.orders_id: list = [None for _ in range(data.ORDER_NUM)]
-        # tour: 移動経路 -> tuple(order_id, order_destination:from/to). これが解
-        self.tour: list = [(-1, None) for _ in range(data.TOUR_LEN)]
+        # tour: 移動経路 -> Order(order_id, order_destination:from/to). これが解
+        self.tour: list = [Order for _ in range(data.TOUR_LEN)]
         # objective value: total tour distance 配達ルートの総移動距離 -> minimize
         self.obj: int = float("inf")
         return
@@ -77,8 +91,8 @@ class Solver:
         job.obj = 0
         for i in range(self.data.TOUR_LEN):
             job.obj += self.eval_dist(
-                self.get_coord_by_id(*self.job.tour[i]),
-                self.get_coord_by_id(*self.job.tour[(i + 1) % self.data.TOUR_LEN])
+                self.get_coord_by_order(self.job.tour[i]),
+                self.get_coord_by_order(self.job.tour[(i + 1) % self.data.TOUR_LEN])
             )
         return
 
@@ -86,15 +100,15 @@ class Solver:
         self.calc_obj(self.job)
         return (10**8 / (1000 + self.job.obj))
 
-    def get_coord_by_id(self, id: int, dest: str) -> tuple:
-        """ order_idとorder_destからcoord(座標)を取得
+    def get_coord_by_order(self, order: Order) -> tuple:
+        """ orderからcoord(座標)を取得
         """
-        if id == -1:
+        if order.dest == "from":
+            return self.data._from[order.id]
+        elif order.dest == "to":
+            return self.data._to[order.id]
+        else:
             return self.data.OFFICE_COORD
-        if dest == "from":
-            return self.data._from[id]
-        elif dest == "to":
-            return self.data._to[id]
 
     def select_order(self) -> None:
         """受ける注文を選択(1000 -> 50)
@@ -102,71 +116,123 @@ class Solver:
         [中心(office)からfrom,toへのマンハッタン距離の和+ペナルティ]が小さい上位50件を採用する．
         遠すぎるものにペナルティを課すことで，(fromが近くてtoが遠い)といったものを排除している．
         """
+        threshold = 200
         # manhattan_dist[i]=tuple(dist,id)
         manhattan_dist = [tuple() for _ in range(self.data.ALL_ORDER_NUM)]
         for id in range(self.data.ALL_ORDER_NUM):
             from_dist = self.eval_dist(self.data.OFFICE_COORD, self.data._from[id])
             to_dist = self.eval_dist(self.data.OFFICE_COORD, self.data._to[id])
             # 閾値よりも遠いものにはペナルティを課す
-            if self.data.THRESHOLD < from_dist:
+            if threshold < from_dist:
                 from_dist *= 5
-            if self.data.THRESHOLD < to_dist:
+            if threshold < to_dist:
                 to_dist *= 5
             manhattan_dist[id] = (from_dist + to_dist, id)
         manhattan_dist.sort()
         self.job.orders_id = [id for _, id in manhattan_dist[:self.data.ORDER_NUM]]
         return
 
+    def k_means(self) -> tuple:
+        # from/toそれぞれをk=8くらいのk-meansで分類したい
+        # ただ，atcoderではscikit-learnは使えなさそうなので，自力で実装しないとダメそう．C++使う？
+        # 速度的にはC++じゃないとダメそうだけど，実装かなりしんどいので，
+        # 有用性を確かめるために一旦scikit-learn使ってPythonで解いてビジュアライズしてみるかな
+        # → 良さそう！！！C++で書いてみるか．
+        K = 8
+        init_centers = np.array([
+            [200, 200],
+            [200, 400],
+            [200, 600],
+            [400, 200],
+            [400, 600],
+            [600, 200],
+            [600, 400],
+            [600, 600]
+        ])
+        kmeans = KMeans(
+            n_clusters=K,
+            max_iter=1000,
+            random_state=1,
+            init=init_centers,
+            n_init=1,
+            tol=0.001,
+        )
+        # from
+        from_coords = np.array([self.get_coord_by_order(Order(id, "from")) for id in self.job.orders_id])
+        kmeans.fit(from_coords)
+        from_labels = kmeans.labels_
+        from_cluster = [set() for _ in range(K)]
+        for i, id in enumerate(self.job.orders_id):
+            from_cluster[from_labels[i]].add(id)
+        # to
+        to_coords = np.array([self.get_coord_by_order(Order(id, "to")) for id in self.job.orders_id])
+        kmeans.fit(to_coords)
+        to_labels = kmeans.labels_
+        to_cluster = [set() for _ in range(K)]
+        for i, id in enumerate(self.job.orders_id):
+            to_cluster[to_labels[i]].add(id)
+        return (from_cluster, to_cluster)
+
     def nearest_neighbor(self) -> None:
         """最近近傍法(貪欲法) - 初期解の生成．fromを全部回ってからtoを全部回る
         - TODO: GRASP(近いものの上位n件から確率で選ぶ)にしても良いかも
+        - TODO: k-meansで分類して，各集合内でnearest_neightborをする．最後にそれぞれを時計回りで繋いで完成
         """
+        from_cluster, to_cluster = self.k_means()
+        tour_i = 1
         # from
-        done = set()  # 確定済み
-        for i in range(self.data.ORDER_NUM):  # fromの全てのiについて
-            min_dist, min_dist_j = float("inf"), None
-            for j in range(self.data.ORDER_NUM):  # i+1の候補をjで全探索
-                if j in done:
-                    continue
-                cur_dist = self.eval_dist(
-                    self.get_coord_by_id(*self.job.tour[i]),
-                    self.get_coord_by_id(self.job.orders_id[j], "from")
-                )
-                if cur_dist < min_dist:
-                    min_dist = cur_dist
-                    min_dist_j = j
-            if min_dist_j is not None:
-                self.job.tour[i + 1] = (self.job.orders_id[min_dist_j], "from")
-                done.add(min_dist_j)
-            # self.print()
-        assert len(done) == self.data.ORDER_NUM,\
-            (len(done), self.data.ORDER_NUM, set(range(self.data.ORDER_NUM)) - done)
+        done = set()
+        # from_quadrants = self.divide_to_quadrants(self.data._from)
+        for one_quadrant in from_cluster:
+            for i_id in one_quadrant:  # fromの全てのiについて
+                min_dist, min_dist_j_id = float("inf"), None
+                for j_id in one_quadrant:  # i+1の候補をjで全探索
+                    if j_id in done:
+                        # if i_id == j_id:
+                        continue
+                    cur_dist = self.eval_dist(
+                        self.data._from[i_id],
+                        self.data._from[j_id]
+                    )
+                    if cur_dist < min_dist:
+                        min_dist = cur_dist
+                        min_dist_j_id = j_id
+                if min_dist_j_id is not None:
+                    self.job.tour[tour_i] = Order(min_dist_j_id, "from")
+                    tour_i += 1
+                    done.add(min_dist_j_id)
+                self.print()
+        assert tour_i == self.data.ORDER_NUM + 1, (tour_i, self.data.ORDER_NUM)
         # to
-        done = set()  # 確定済み
-        for i in range(self.data.ORDER_NUM):  # toの全てのiについて
-            min_dist, min_dist_j = float("inf"), None
-            for j in range(self.data.ORDER_NUM):  # i+1の候補をjで全探索
-                if j in done:
-                    continue
-                cur_dist = self.eval_dist(
-                    self.get_coord_by_id(*self.job.tour[self.data.ORDER_NUM + i]),
-                    self.get_coord_by_id(self.job.orders_id[j], "to")
-                )
-                if cur_dist < min_dist:
-                    min_dist = cur_dist
-                    min_dist_j = j
-            if min_dist_j is not None:
-                self.job.tour[self.data.ORDER_NUM + i + 1] = (self.job.orders_id[min_dist_j], "to")
-                done.add(min_dist_j)
-            # self.print()
-        assert len(done) == self.data.ORDER_NUM,\
-            (len(done), self.data.ORDER_NUM, set(range(self.data.ORDER_NUM)) - done)
+        done = set()
+        # to_quadrants = self.divide_to_quadrants(self.data._to)
+        for one_quadrant in reversed(to_cluster):
+            for i_id in one_quadrant:  # toの全てのiについて
+                min_dist, min_dist_j_id = float("inf"), None
+                for j_id in one_quadrant:  # i+1の候補をjで全探索
+                    if j_id in done:
+                        # if i_id == j_id:
+                        continue
+                    cur_dist = self.eval_dist(
+                        self.data._to[i_id],
+                        self.data._to[j_id],
+                    )
+                    if cur_dist < min_dist:
+                        min_dist = cur_dist
+                        min_dist_j_id = j_id
+                if min_dist_j_id is not None:
+                    self.job.tour[tour_i] = Order(min_dist_j_id, "to")
+                    tour_i += 1
+                    done.add(min_dist_j_id)
+                self.print()
+        assert tour_i == self.data.TOUR_LEN - 1, (tour_i, self.data.TOUR_LEN - 1)
         return
 
     def local_search(self) -> None:
         """ 局所探索法
         """
         self.print()
+        return
         while self.check_time_limit():
             self.two_opt_search()
             self.or_opt_search()
@@ -184,18 +250,18 @@ class Solver:
             i -> j -> ... -> i+1 -> j+1 に変えたときのobjの差分を返す
             """
             cur_dist = self.eval_dist(
-                self.get_coord_by_id(*self.job.tour[i]),
-                self.get_coord_by_id(*self.job.tour[i + 1])
+                self.get_coord_by_order(self.job.tour[i]),
+                self.get_coord_by_order(self.job.tour[i + 1])
             ) + self.eval_dist(
-                self.get_coord_by_id(*self.job.tour[j]),
-                self.get_coord_by_id(*self.job.tour[j + 1])
+                self.get_coord_by_order(self.job.tour[j]),
+                self.get_coord_by_order(self.job.tour[j + 1])
             )
             new_dist = self.eval_dist(
-                self.get_coord_by_id(*self.job.tour[i]),
-                self.get_coord_by_id(*self.job.tour[j])
+                self.get_coord_by_order(self.job.tour[i]),
+                self.get_coord_by_order(self.job.tour[j])
             ) + self.eval_dist(
-                self.get_coord_by_id(*self.job.tour[i + 1]),
-                self.get_coord_by_id(*self.job.tour[j + 1])
+                self.get_coord_by_order(self.job.tour[i + 1]),
+                self.get_coord_by_order(self.job.tour[j + 1])
             )
             return new_dist - cur_dist
 
@@ -251,34 +317,34 @@ class Solver:
             q = self.job.tour[j]
             next_q = self.job.tour[j + 1]
             cur_dist = self.eval_dist(
-                self.get_coord_by_id(*prev_p),
-                self.get_coord_by_id(*head_p)
+                self.get_coord_by_order(prev_p),
+                self.get_coord_by_order(head_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*tail_p),
-                self.get_coord_by_id(*next_p)
+                self.get_coord_by_order(tail_p),
+                self.get_coord_by_order(next_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*q),
-                self.get_coord_by_id(*next_q)
+                self.get_coord_by_order(q),
+                self.get_coord_by_order(next_q)
             )
             new_dist_fwd = self.eval_dist(
-                self.get_coord_by_id(*prev_p),
-                self.get_coord_by_id(*next_p)
+                self.get_coord_by_order(prev_p),
+                self.get_coord_by_order(next_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*q),
-                self.get_coord_by_id(*head_p)
+                self.get_coord_by_order(q),
+                self.get_coord_by_order(head_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*tail_p),
-                self.get_coord_by_id(*next_q)
+                self.get_coord_by_order(tail_p),
+                self.get_coord_by_order(next_q)
             )
             new_dist_bwd = self.eval_dist(
-                self.get_coord_by_id(*prev_p),
-                self.get_coord_by_id(*next_p)
+                self.get_coord_by_order(prev_p),
+                self.get_coord_by_order(next_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*q),
-                self.get_coord_by_id(*tail_p)
+                self.get_coord_by_order(q),
+                self.get_coord_by_order(tail_p)
             ) + self.eval_dist(
-                self.get_coord_by_id(*head_p),
-                self.get_coord_by_id(*next_q)
+                self.get_coord_by_order(head_p),
+                self.get_coord_by_order(next_q)
             )
             if new_dist_fwd <= new_dist_bwd:
                 return (new_dist_fwd - cur_dist, "fwd")
@@ -340,7 +406,7 @@ class Solver:
             print("format: m r_1 ... r_m \t(1-indexed)")
         r = [i + 1 for i in self.job.orders_id]  # MEMO: 1-indexedに変換
         print(len(r), *r)
-        tour_coord = [self.get_coord_by_id(id, dest) for id, dest in self.job.tour]
+        tour_coord = [self.get_coord_by_order(order) for order in self.job.tour]
         if DEBUG:
             print("format: n x_1 y_1 ... x_y y_n")
             print(len(tour_coord), *tour_coord)
@@ -361,6 +427,7 @@ def main() -> None:
         print("final score:", solver.get_current_score())
         print("final objective value:", solver.job.obj)
         solver.check_time_limit("end")
+    print(solver.get_current_score(), file=sys.stderr)
 
 
 if __name__ == '__main__':
