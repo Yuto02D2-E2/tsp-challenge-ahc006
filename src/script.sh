@@ -4,9 +4,8 @@ set -e
 set -u
 
 function compile() {
-    # FIXME: clangが使えない
-    g++ solution/main.cpp -o solution/main.bin -std=c++17 -Wall -Wextra -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC $1
-    # clang++ solution/main.cpp -o solution/main.bin -std=c++17 -Wall -Wextra -fsanitize=undefined,address -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC $1
+    # g++ solution/main.cpp -o solution/main.bin -std=c++17 -Wall -Wextra -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC $1
+    clang++ solution/main.cpp -o solution/main.bin -std=c++17 -Wall -Wextra -fsanitize=undefined,address -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC $1
     return;
 }
 
