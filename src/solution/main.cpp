@@ -1,7 +1,6 @@
 // #include <bits/stdc++.h>
 // 上記はg++だと使えるが，clang++だと使えない．
 // 代わりに，bits/stdc++.hに書かれている中身を*.cppファイルの先頭に書けば良い
-// 面倒くさいしg++で良いかと思うが，-fsanitize=undefined,addressはclang++しか使えない？っぽいのでclangを使いたい
 
 // C
 #ifndef _GLIBCXX_NO_ASSERT
@@ -86,8 +85,8 @@
 #include <system_error>
 #include <thread>
 #include <tuple>
-#include <typeindex>
 #include <type_traits>
+#include <typeindex>
 #include <unordered_map>
 #include <unordered_set>
 #endif
@@ -112,15 +111,15 @@
 #include <compare>
 #include <concepts>
 #if __cpp_impl_coroutine
-# include <coroutine>
+#include <coroutine>
 #endif
 #include <latch>
 #include <numbers>
 #include <ranges>
-#include <span>
-#include <stop_token>
 #include <semaphore>
 #include <source_location>
+#include <span>
+#include <stop_token>
 #include <syncstream>
 #include <version>
 #endif
@@ -129,23 +128,23 @@
 #include <expected>
 #include <spanstream>
 #if __has_include(<stacktrace>)
-# include <stacktrace>
+#include <stacktrace>
 #endif
 #include <stdatomic.h>
 #endif
 
 // end of bits/stdc++
 
-using std::cin;
-using std::cout;
-using std::endl;
-namespace chrono = std::chrono;
-
 #ifdef _LOCAL
 const bool LOCAL = true;
 #else
 const bool LOCAL = false;
 #endif
+
+using std::cin;
+using std::cout;
+using std::endl;
+namespace chrono = std::chrono;
 
 namespace writer {
 /* print (iter, sep=",", end="\n") */
@@ -171,8 +170,27 @@ void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "
 }
 }  // namespace writer
 
+// 実行時間計測
+struct Timer {
+private:
+    chrono::system_clock::time_point start_time, cur_time;
+
+public:
+    Timer() {
+        // コンストラクタ
+        start_time = chrono::system_clock::now();
+    }
+
+    std::int64_t get_current_time() {
+        // 現在までの経過時間(double?)time[msec]を返す
+        cur_time = chrono::system_clock::now();
+        return chrono::duration_cast<chrono::milliseconds>(cur_time - start_time).count();
+    }
+};
+
 // 座標(0-indexed)
 struct Point {
+public:
     int x, y;
     Point() { x = -1, y = -1; }
     Point(const int x_, const int y_) : x(x_), y(y_) {}
@@ -187,6 +205,7 @@ enum class Dest {
 
 // 注文
 struct Order {
+public:
     int id;
     Dest dest;
     Order(const int id_, const Dest dest_) : id(id_), dest(dest_) {}
@@ -194,6 +213,7 @@ struct Order {
 
 // 問題で与えられた/問題から得られるデータ
 struct Data {
+public:
     const int MAP_SIZE = 800;  // width=height=MAP_SIZE
     const Point OFFICE_POINT = Point(400, 400);
     const int ALL_ORDER_NUM = 1000;
@@ -218,16 +238,81 @@ struct Data {
 
 // 解の単位
 struct Job {
+private:
+    // あるidのorderのtour内での順番
+    std::vector<int> from_id_pos;
+    std::vector<int> to_id_pos;
+
+public:
+    // 選択したorderのid集合
     std::vector<int> orders_id;
-    std::vector<Order> tour;        // index -> Order
-    std::map<Order, int> order2id;  // Order -> index
-    int obj;                        // objective value -> minimize
+    // 訪れる座標(point)順序付き集合
+    std::vector<Order> tour;
+    int obj;  // objective value -> minimize
     Job() {}
 
     void init(const Data& data) {
+        obj = (1 << 30);
         orders_id = std::vector<int>(data.ORDER_NUM, -1);
         tour = std::vector<Order>(data.TOUR_LEN, Order(-1, Dest::office));
-        obj = (1 << 30);
+        from_id_pos = std::vector<int>(data.ALL_ORDER_NUM, -1);
+        to_id_pos = std::vector<int>(data.ALL_ORDER_NUM, -1);
+        return;
+    }
+
+    void set_copy(const Job& one_job) {
+        // one_jobの内容をコピーする
+        obj = one_job.obj;
+        for (int i = 0; i < int(orders_id.size()); i++) {
+            orders_id[i] = one_job.orders_id[i];
+        }
+        for (int i = 0; i < int(tour.size()); i++) {
+            tour[i] = one_job.tour[i];
+        }
+        for (int i = 0; i < int(from_id_pos.size()); i++) {
+            from_id_pos[i] = one_job.from_id_pos[i];
+            to_id_pos[i] = one_job.to_id_pos[i];
+        }
+        return;
+    }
+
+    void set_index_by_order(const Order& order, const int& pos) {
+        // あるorderのtour内の順番(index)をセットする
+        assert(0 <= pos && pos < int(tour.size()));
+        if (order.dest == Dest::from) {
+            from_id_pos[order.id] = pos;
+        } else if (order.dest == Dest::to) {
+            to_id_pos[order.id] = pos;
+        } else {
+            return;
+        }
+    }
+
+    int get_index_by_order(const Order& order) const {
+        // あるorderのtour内の順番(index)を返す
+        if (order.dest == Dest::from) {
+            return from_id_pos[order.id];
+        } else if (order.dest == Dest::to) {
+            return to_id_pos[order.id];
+        } else {
+            return 0;  // office
+        }
+    }
+
+    void insert(const int& target_index, const Order& order) {
+        // FIXME: バグってる？
+        shift_tour(target_index, get_index_by_order(order));
+        tour[target_index] = order;
+        return;
+    }
+
+private:
+    void shift_tour(const int& top_index, const int& tail_index) {
+        // tourの[top,tail]を1つずつ後ろにずらす．tour[tail]を捨てる
+        for (int i = tail_index; i >= top_index; i--) {
+            // 後ろから前にずらす
+            tour[i] = tour[i - 1];
+        }
         return;
     }
 };
@@ -235,18 +320,18 @@ struct Job {
 // インターフェース
 class Solver {
 private:
-    const double TIME_LIMIT = 1950.0;  // [msec]
-    chrono::system_clock::time_point start_time, cur_time;
-    Data data;
-    Job job;
+    const std::int64_t TIME_LIMIT = 1950;  // [msec]
+    Timer timer = Timer();                 // 実行時間計測
+    Data data = Data();                    // data set
+    Job best_job = Job();                  // 最適解
     // (dist, id)
     std::vector<std::pair<int, int>> manhattan_dist;
+    const double PI = std::acos(-1.0);
 
 public:
     Solver() {
-        start_time = chrono::system_clock::now();
         data.read_data();
-        job.init(data);
+        best_job.init(data);
     }
 
     void select_order() {
@@ -254,8 +339,8 @@ public:
         // fromだけ,toだけが近いものを排除するために，遠すぎる座標に対してペナルティを課している
         const int threshold = data.MAP_SIZE / 4;
         for (int id = 0; id < data.ALL_ORDER_NUM; id++) {
-            int from_dist = get_dist_by_order(data.OFFICE_POINT, data.from[id]);
-            int to_dist = get_dist_by_order(data.OFFICE_POINT, data.to[id]);
+            int from_dist = get_dist_by_point(data.OFFICE_POINT, data.from[id]);
+            int to_dist = get_dist_by_point(data.OFFICE_POINT, data.to[id]);
             // 遠すぎる(閾値よりも遠い)やつにペナルティ
             if (threshold < from_dist) from_dist *= 5;
             if (threshold < to_dist) to_dist *= 5;
@@ -263,7 +348,7 @@ public:
         }
         std::sort(manhattan_dist.begin(), manhattan_dist.end());
         for (int i = 0; i < data.ORDER_NUM; i++) {
-            job.orders_id[i] = manhattan_dist[i].second;
+            best_job.orders_id[i] = manhattan_dist[i].second;
         }
         return;
     }
@@ -273,29 +358,36 @@ public:
         // pop(degs) -> min({deg, id})
         std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>> from_degs, to_degs;
         for (int i = 0; i < data.ORDER_NUM; i++) {
-            int id = job.orders_id[i];
-            from_degs.push(std::make_pair(get_deg_by_order(Order(id, Dest::from)), id));
-            to_degs.push(std::make_pair(get_deg_by_order(Order(id, Dest::to)), id));
+            int id = best_job.orders_id[i];
+            from_degs.push(std::make_pair(get_rad_by_order(Order(id, Dest::from)), id));
+            to_degs.push(std::make_pair(get_rad_by_order(Order(id, Dest::to)), id));
         }
         int i = 1;  // tour index
         while (!from_degs.empty()) {
             auto [deg, id] = from_degs.top();  // c++17以降で使えるunpack方法．c++14以前ならstd::tie()を使う
             from_degs.pop();
-            job.tour[i++] = Order(id, Dest::from);
+            best_job.tour[i] = Order(id, Dest::from);
+            best_job.set_index_by_order(best_job.tour[i], i);
+            i++;
         }
         assert(from_degs.empty());
         while (!to_degs.empty()) {
             auto [deg, id] = to_degs.top();
             to_degs.pop();
-            job.tour[i++] = Order(id, Dest::to);
+            best_job.tour[i] = Order(id, Dest::to);
+            best_job.set_index_by_order(best_job.tour[i], i);
+            i++;
         }
         assert(to_degs.empty());
+        calc_obj(best_job);
         return;
     }
 
     void local_search() {
-        // TODO: 実装する
-        // メモ：回り方を変えるか，注文を変えるかどっちにしよう？
+        // 山登り法; hill climbing
+        hill_climbing();
+        // 焼きなまし法; Simulated Annealing
+        // simulate_annealing();
         // while (check_time_limit()) {
         //     two_opt_search();
         //     or_opt_search();
@@ -305,12 +397,12 @@ public:
 
     void print() {
         std::vector<int> orders_id_;
-        for (int id : job.orders_id) {
+        for (const int& id : best_job.orders_id) {
             orders_id_.emplace_back(id + 1);  // 1-indexed
         }
         std::vector<int> tour_;
-        for (auto t : job.tour) {
-            Point p = get_point_by_order(t);
+        for (const Order& o : best_job.tour) {
+            Point p = get_point_by_order(o);
             tour_.emplace_back(p.x);
             tour_.emplace_back(p.y);
         }
@@ -320,8 +412,9 @@ public:
             writer::printf(orders_id_, "orders id");
             cout << "tour len:" << tour_.size() / 2 << endl;
             writer::printf(tour_, "tour");
+            cout << "objective value:" << best_job.obj << endl;
             cout << "score:" << get_current_score() << endl;
-            cout << "objective value:" << job.obj << endl;
+            cout << "process time:" << timer.get_current_time() << "[msec]" << endl;
         } else {
             cout << orders_id_.size() << " ";
             writer::print(orders_id_, " ");
@@ -332,32 +425,23 @@ public:
     }
 
     double get_current_score() {
-        calc_obj();
-        return (1e8 / (1000.0 + job.obj));
+        calc_obj(best_job);
+        return (1e8 / (1000.0 + best_job.obj));
     }
 
 private:
     bool check_time_limit() {
-        cur_time = chrono::system_clock::now();
-        double elapsed_time = chrono::duration_cast<chrono::milliseconds>(cur_time - start_time).count();
-        return (elapsed_time < TIME_LIMIT);
+        // 両辺の値はstd::int64_t型
+        return (timer.get_current_time() < TIME_LIMIT);
     }
 
-    int get_dist_by_order(const Point& p, const Point& q) const {
+    int get_dist_by_point(const Point& p, const Point& q) const {
         // p(x,y)とq(x,y)のマンハッタン距離を返す
         return (abs(p.x - q.x) + abs(p.y - q.y));
     }
 
-    void calc_obj() {
-        job.obj = 0;
-        for (int i = 0; i < data.TOUR_LEN; i++) {
-            job.obj += get_dist_by_order(get_point_by_order(job.tour[i]),
-                                         get_point_by_order(job.tour[(i + 1) % data.TOUR_LEN]));
-        }
-        return;
-    }
-
     Point get_point_by_order(const Order& order) const {
+        // あるorderの座標(point)を返す
         if (order.dest == Dest::from) {
             return data.from[order.id];
         } else if (order.dest == Dest::to) {
@@ -367,8 +451,8 @@ private:
         }
     }
 
-    double get_deg_by_order(const Order& order) {
-        // orderの座標ベクトル(point)が中心(400, 400)を原点としてx軸となす角[rad]を返す
+    double get_rad_by_order(const Order& order) {
+        // orderの座標ベクトル(point)が中心(400, 400)を原点としてx軸となす角rad=[-pi,pi]を返す
         Point p = get_point_by_order(order);
         // 中心(400,400)を原点とみなすために全ての点を-400,-400する
         p.x -= 400, p.y -= 400;
@@ -376,24 +460,99 @@ private:
         return atan2(double(p.y), double(p.x));
     }
 
-    void two_opt_search() {
-        // TODO: 実装する
-        // pythonで回り方を変えるのをやったけど芳しくなかったので，注文を変える方針を試してみる
-        // manhattan_distの51番目から順番に，from/toそれぞれを最近近傍法で挿入してみて，良さげだったら採用する
-        // 一番Edgeが長くて，officeから離れているnodeを消す
-        // SA(アニーリング;所謂焼きなまし)をしても良いかも
-        // for (int i = data.ORDER_NUM + 1; i < data.ALL_ORDER_NUM; i++) {
-        //     int i_id = manhattan_dist[i].second;
-        //     int del_id = -1;
-        //     int del_dist = std::numeric_limits<int>::min();  // officeからのdist(from + to) + edge_len
-        //     for (int j_id : job.orders_id) {
-        //         int cur_dist = get_dist_by_order(data.OFFICE_POINT, get_point_by_order(Order(j_id, Dest::from))) +
-        //                        get_dist_by_order(data.OFFICE_POINT, get_point_by_order(Order(j_id, Dest::to)));
-        //         cur_dist += get_dist_by_order(get_point_by_order());
-        //     }
-        // }
+    double get_rad_diff(const double& p_rad, const double& q_rad) {
+        return std::min(abs(p_rad - q_rad), 2 * PI - (p_rad - q_rad));
+    }
+
+    void calc_obj(Job& one_job) {
+        // objective valueを計算する．
+        one_job.obj = 0;
+        for (int i = 0; i < data.TOUR_LEN; i++) {
+            one_job.obj += get_dist_by_point(
+                get_point_by_order(one_job.tour[i]),
+                get_point_by_order(one_job.tour[(i + 1) % data.TOUR_LEN]));
+        }
         return;
     }
+
+    void hill_climbing() {
+        // 山登り法
+        // Dest::toのorderをDest::fromの間に挿入していく．つまり，一週目で配れる分は配っておく
+        Job cur_job = Job();  // 山登りの結果格納用
+        cur_job.init(data);
+        cur_job.set_copy(best_job);       // 初期解をコピー
+        const double RAD_EPS = PI / 2.0;  // 逆走の許容値．pi/4[rad]=45[deg]までなら逆走を許す
+        for (const int& to_id : cur_job.orders_id) {
+            Order to_order = Order(to_id, Dest::to);
+            if ((cur_job.get_index_by_order(to_order) < 0) || (data.TOUR_LEN - 2 < cur_job.get_index_by_order(to_order))) {
+                // これ以上後ろは見れない
+                if (LOCAL) {
+                    cout << "reach tail" << endl;
+                }
+                continue;
+            }
+            Point to_point = get_point_by_order(to_order);
+            int opt_delta = 0;  // score_deltaの絶対値が大きく，符号が負であれば良い
+            int opt_delta_id = -1;
+            for (int id = 1; id < data.TOUR_LEN - 2; id++) {
+                if (cur_job.get_index_by_order(cur_job.tour[id]) < cur_job.get_index_by_order(Order(to_id, Dest::from))) {
+                    // 順序関係を満たしているかチェックする
+                    // 常にfrom_pos < to_posが成立しないとダメ
+                    if (LOCAL) {
+                        cout << "illigal order" << endl;
+                    }
+                    continue;
+                }
+                if ((RAD_EPS < get_rad_diff(get_rad_by_order(cur_job.tour[id]), get_rad_by_order(to_order))) ||
+                    (RAD_EPS < get_rad_diff(get_rad_by_order(to_order), get_rad_by_order(cur_job.tour[id + 1])))) {
+                    // 離れすぎるとよくない
+                    if (LOCAL) {
+                        cout << "rad too large" << endl;
+                    }
+                    continue;
+                }
+                Point to_prev_point = get_point_by_order(
+                    cur_job.tour[cur_job.get_index_by_order(to_order) - 1]);
+                Point to_next_point = get_point_by_order(
+                    cur_job.tour[cur_job.get_index_by_order(to_order) + 1]);
+                Point from_p = get_point_by_order(cur_job.tour[id]);
+                Point from_q = get_point_by_order(cur_job.tour[id + 1]);
+                int cur_dist = get_dist_by_point(to_prev_point, to_point) +
+                               get_dist_by_point(to_point, to_next_point) +
+                               get_dist_by_point(from_p, from_q);
+                int new_dist = get_dist_by_point(from_p, to_point) +
+                               get_dist_by_point(to_point, from_q) +
+                               get_dist_by_point(to_prev_point, to_next_point);
+                int cur_delta = new_dist - cur_dist;
+                if (cur_delta < opt_delta) {
+                    opt_delta = cur_delta;
+                    opt_delta_id = id;
+                }
+            }
+            if (0 < opt_delta_id) {
+                // 良い感じに挿入できる場所があった
+                if (LOCAL) {
+                    cout << to_id << " is insert to " << opt_delta_id + 1 << endl;
+                }
+                cur_job.insert(opt_delta_id + 1, to_order);
+                cur_job.set_index_by_order(to_order, opt_delta_id + 1);
+            }
+        }
+        calc_obj(cur_job);
+        if (LOCAL) {
+            cout << "cur_job.obj:" << cur_job.obj << endl;
+            cout << "best_job.obj:" << best_job.obj << endl;
+        }
+        // if (cur_job.obj < best_job.obj) {
+        //     // 山登りしたらscoreが改善(objが減少)した場合
+        //     best_job.set_copy(cur_job);
+        // }
+        best_job.set_copy(cur_job);  // debug
+        return;
+    }
+
+    void simulate_annealing() {}
+    void two_opt_search() {}
     void or_opt_search() {}
 };
 
