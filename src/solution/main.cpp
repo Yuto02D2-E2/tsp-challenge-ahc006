@@ -173,18 +173,22 @@ void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "
 // 実行時間計測
 struct Timer {
 private:
+    const std::int64_t TIME_LIMIT = 1950;  // [msec]
     chrono::system_clock::time_point start_time, cur_time;
 
 public:
     Timer() {
-        // コンストラクタ
         start_time = chrono::system_clock::now();
     }
 
-    std::int64_t get_current_time() {
-        // 現在までの経過時間(double?)time[msec]を返す
+    std::int64_t get_elapsed_time() {
+        // 現在までの経過時間elapsed -> (int64_t)time[msec]を返す
         cur_time = chrono::system_clock::now();
         return chrono::duration_cast<chrono::milliseconds>(cur_time - start_time).count();
+    }
+
+    bool check_time_limit() {
+        return (get_elapsed_time() < TIME_LIMIT);
     }
 };
 
@@ -291,8 +295,10 @@ public:
     int get_index_by_order(const Order& order) const {
         // あるorderのtour内の順番(index)を返す
         if (order.dest == Dest::from) {
+            assert(from_id_pos[order.id] != -1);
             return from_id_pos[order.id];
         } else if (order.dest == Dest::to) {
+            assert(to_id_pos[order.id] != -1);
             return to_id_pos[order.id];
         } else {
             return 0;  // office
@@ -320,10 +326,9 @@ private:
 // インターフェース
 class Solver {
 private:
-    const std::int64_t TIME_LIMIT = 1950;  // [msec]
-    Timer timer = Timer();                 // 実行時間計測
-    Data data = Data();                    // data set
-    Job best_job = Job();                  // 最適解
+    Timer timer = Timer();  // 実行時間計測
+    Data data = Data();     // data set
+    Job best_job = Job();   // 最適解
     // (dist, id)
     std::vector<std::pair<int, int>> manhattan_dist;
     const double PI = std::acos(-1.0);
@@ -337,7 +342,7 @@ public:
     void select_order() {
         // officeからのマンハッタン距離が近そうな上位50件を受け付ける．
         // fromだけ,toだけが近いものを排除するために，遠すぎる座標に対してペナルティを課している
-        const int threshold = data.MAP_SIZE / 4;
+        const int threshold = data.MAP_SIZE / 4 * 1.1;
         for (int id = 0; id < data.ALL_ORDER_NUM; id++) {
             int from_dist = get_dist_by_point(data.OFFICE_POINT, data.from[id]);
             int to_dist = get_dist_by_point(data.OFFICE_POINT, data.to[id]);
@@ -384,11 +389,10 @@ public:
     }
 
     void local_search() {
-        // 山登り法; hill climbing
-        hill_climbing();
-        // 焼きなまし法; Simulated Annealing
-        // simulate_annealing();
-        // while (check_time_limit()) {
+        // 局所探索
+        hill_climbing();  // 山登り法; hill climbing
+        // simulate_annealing(); // 焼きなまし法; Simulated Annealing
+        // while (timer.check_time_limit()) {
         //     two_opt_search();
         //     or_opt_search();
         // }
@@ -414,7 +418,7 @@ public:
             writer::printf(tour_, "tour");
             cout << "objective value:" << best_job.obj << endl;
             cout << "score:" << get_current_score() << endl;
-            cout << "process time:" << timer.get_current_time() << "[msec]" << endl;
+            cout << "process time:" << timer.get_elapsed_time() << "[msec]" << endl;
         } else {
             cout << orders_id_.size() << " ";
             writer::print(orders_id_, " ");
@@ -430,11 +434,6 @@ public:
     }
 
 private:
-    bool check_time_limit() {
-        // 両辺の値はstd::int64_t型
-        return (timer.get_current_time() < TIME_LIMIT);
-    }
-
     int get_dist_by_point(const Point& p, const Point& q) const {
         // p(x,y)とq(x,y)のマンハッタン距離を返す
         return (abs(p.x - q.x) + abs(p.y - q.y));
@@ -461,6 +460,7 @@ private:
     }
 
     double get_rad_diff(const double& p_rad, const double& q_rad) {
+        // TODO: 合ってる？
         return std::min(abs(p_rad - q_rad), 2 * PI - (p_rad - q_rad));
     }
 
@@ -480,21 +480,22 @@ private:
         // Dest::toのorderをDest::fromの間に挿入していく．つまり，一週目で配れる分は配っておく
         Job cur_job = Job();  // 山登りの結果格納用
         cur_job.init(data);
-        cur_job.set_copy(best_job);       // 初期解をコピー
-        const double RAD_EPS = PI / 2.0;  // 逆走の許容値．pi/4[rad]=45[deg]までなら逆走を許す
+        cur_job.set_copy(best_job);
+        const double RAD_EPS = PI / 4.0;  // 逆走の許容値．pi/4[rad]=45[deg]までなら逆走を許す
+        const int threshold = data.MAP_SIZE / 4;
         for (const int& to_id : cur_job.orders_id) {
             Order to_order = Order(to_id, Dest::to);
-            if ((cur_job.get_index_by_order(to_order) < 0) || (data.TOUR_LEN - 2 < cur_job.get_index_by_order(to_order))) {
-                // これ以上後ろは見れない
+            if ((cur_job.get_index_by_order(to_order) <= 0) || (data.TOUR_LEN - 2 <= cur_job.get_index_by_order(to_order))) {
+                // 端っこ
                 if (LOCAL) {
-                    cout << "reach tail" << endl;
+                    cout << "reach border" << endl;
                 }
                 continue;
             }
             Point to_point = get_point_by_order(to_order);
             int opt_delta = 0;  // score_deltaの絶対値が大きく，符号が負であれば良い
             int opt_delta_id = -1;
-            for (int id = 1; id < data.TOUR_LEN - 2; id++) {
+            for (int id = 1; id < data.ORDER_NUM; id++) {
                 if (cur_job.get_index_by_order(cur_job.tour[id]) < cur_job.get_index_by_order(Order(to_id, Dest::from))) {
                     // 順序関係を満たしているかチェックする
                     // 常にfrom_pos < to_posが成立しないとダメ
@@ -508,6 +509,14 @@ private:
                     // 離れすぎるとよくない
                     if (LOCAL) {
                         cout << "rad too large" << endl;
+                    }
+                    continue;
+                }
+                if ((threshold < get_dist_by_point(get_point_by_order(cur_job.tour[id]), get_point_by_order(to_order))) ||
+                    (threshold < get_dist_by_point(get_point_by_order(to_order), get_point_by_order(cur_job.tour[id + 1])))) {
+                    // 離れすぎるとよくない
+                    if (LOCAL) {
+                        cout << "dist too large" << endl;
                     }
                     continue;
                 }
@@ -543,11 +552,11 @@ private:
             cout << "cur_job.obj:" << cur_job.obj << endl;
             cout << "best_job.obj:" << best_job.obj << endl;
         }
-        // if (cur_job.obj < best_job.obj) {
-        //     // 山登りしたらscoreが改善(objが減少)した場合
-        //     best_job.set_copy(cur_job);
-        // }
-        best_job.set_copy(cur_job);  // debug
+        if (cur_job.obj < best_job.obj) {
+            // 山登りしたらscoreが改善(objが減少)した場合
+            // best_job.set_copy(cur_job);
+        }
+        // best_job.set_copy(cur_job);  // debug
         return;
     }
 
@@ -566,6 +575,7 @@ int main() {
     Solver solver;
     solver.select_order();
     solver.build_init_solution();
+    solver.print();
     solver.local_search();
     solver.print();
     std::cerr << solver.get_current_score() << endl;  // pythonスクリプトによるスコア計算用
