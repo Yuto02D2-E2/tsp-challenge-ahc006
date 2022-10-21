@@ -172,7 +172,8 @@ void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "
 // 実行時間管理
 struct Timer {
 private:
-    const std::int64_t TIME_LIMIT = 1900;  // [msec]
+    // const std::int64_t TIME_LIMIT = 4069;  // DEBUG:
+    const std::int64_t TIME_LIMIT = 1950;  // [msec]
     chrono::system_clock::time_point start_time, cur_time;
 
 public:
@@ -509,6 +510,11 @@ private:
         tour[i]がtoだった場合，tour[j]よりも前にtour[i].fromが存在すればok
         そうでなければng
         これを繰り返す
+
+        良い感じに動いているが，1sec時点で既に局所最適に陥ってるっぽい
+        多様性を出すために
+        TODO: i<jの場合に逆方向へのinsertを行う
+        TODO: 焼きなましする
         */
 
         if (LOCAL) {
@@ -516,7 +522,7 @@ private:
         }
         int cnt = 0;
 
-        const double RAD_EPS = PI / 4.0;  // 逆走の許容値．pi/4[rad]=45[deg]までなら逆走を許す
+        const double RAD_EPS = PI / 6.0;  // 逆走の許容値．pi/6[rad]=30[deg]までなら逆走を許す
 
         Job cur_job = Job();  // 仮の結果格納用
         cur_job.init(data);
@@ -592,23 +598,27 @@ private:
                     cur_job.obj = calc_obj(cur_job);
                     cnt++;
                     improved = true;
+
+                    // DEBUG:
+                    // best_job.set_copy(cur_job);
+                    // print();
                 }
+            }
+            if (LOCAL) {
+                cout << "insert cnt:" << cnt << endl;
+                cout << "cur_job.obj:" << cur_job.obj << endl;
+                cout << "best_job.obj:" << best_job.obj << endl;
+            }
+            if (cur_job.obj < best_job.obj) {
+                // scoreが改善(objが減少)した場合
+                // 普通は改善するはず
+                best_job.set_copy(cur_job);
             }
             if (!improved) {
                 // nbhd内の全pairでスコアが改善しなかった
                 // 通常ここでbreakすることは無い(大概の場合は，先に時間切れになる)
-                break;
+                return;
             }
-        }
-        if (LOCAL) {
-            cout << "insert cnt:" << cnt << endl;
-            cout << "cur_job.obj:" << cur_job.obj << endl;
-            cout << "best_job.obj:" << best_job.obj << endl;
-        }
-        if (cur_job.obj < best_job.obj) {
-            // scoreが改善(objが減少)した場合
-            // 普通は改善するはず
-            best_job.set_copy(cur_job);
         }
         return;
     }
