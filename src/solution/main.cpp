@@ -169,27 +169,28 @@ void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "
 }
 }  // namespace writer
 
-// RNG; rondom number generator
-struct XorShift {
+// RNG; random number generator
+struct RNG {
 private:
     std::uint64_t x = 123456789;
     std::uint64_t y = 362436069;
     std::uint64_t z = 521288629;
     std::uint64_t w = 88675123;
-    std::uint32_t _max = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t _min = std::numeric_limits<std::uint32_t>::min();
+    std::uint32_t max_ = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t min_ = std::numeric_limits<std::uint32_t>::min();
 
 public:
-    XorShift() {}
+    RNG() {}
 
     double rand() {
+        // XorShift Algorithm
         // [0,1]の(double)numberを返す
         std::uint32_t t = (x ^ (x << 11));
         x = y;
         y = z;
         z = w;
         w = (w ^ (w >> 19)) ^ (t ^ (t >> 8));
-        return double(w - _min) / (_max - _min);  // min-max normalization
+        return double(w - min_) / (max_ - min_);  // min-max normalization
     }
 
     double randrange(const int& l, const int& r) {
@@ -200,18 +201,15 @@ public:
 
 // 実行時間管理
 struct Timer {
-private:
+public:
     // const std::int64_t TIME_LIMIT = 5000;  // DEBUG:
     const std::int64_t TIME_LIMIT = 1950;  // [msec]
+private:
     chrono::system_clock::time_point start_time, cur_time;
 
 public:
     Timer() {
         start_time = chrono::system_clock::now();
-    }
-
-    std::int64_t get_time_limit() const {
-        return TIME_LIMIT;
     }
 
     std::int64_t get_elapsed_time() {
@@ -328,7 +326,7 @@ public:
         } else if (order.dest == Dest::to) {
             return to_id_index[order.id];
         } else {
-            return 0;  // office
+            return -1;  // office
         }
     }
 
@@ -347,10 +345,7 @@ public:
 
     void swap(const int& i, const int& j) {
         // tour[i]とtour[j]をswapする
-        // Order tmp = tour[i];
-        // tour[i] = tour[j];
-        // tour[j] = tmp;
-        std::swap(tour[i], tour[j]);  // MEMO: バグってる説ある
+        std::swap(tour[i], tour[j]);
         set_index_by_order(i, tour[i]);
         set_index_by_order(j, tour[j]);
         return;
@@ -365,8 +360,9 @@ private:
         } else if (order.dest == Dest::to) {
             to_id_index[order.id] = index;
         } else {
-            return;
+            assert(false);
         }
+        return;
     }
 
     void shift_tour(const int& top_index, const int& tail_index) {
@@ -383,12 +379,11 @@ private:
 // インターフェース
 class Solver {
 private:
-    Timer timer = Timer();            // 実行時間管理
-    Data data = Data();               // data set
-    Job best_job = Job();             // 暫定解(今まで調べた中で一番良かったもの．最適解とは限らない)
-    Job cur_job = Job();              // 仮の解
-    XorShift xs_random = XorShift();  // 乱数生成器
-    const double PI = std::acos(-1.0);
+    Timer timer = Timer();  // 実行時間管理
+    Data data = Data();     // data set
+    Job best_job = Job();   // 暫定解(今まで調べた中で一番良かったもの．最適解とは限らない)
+    Job cur_job = Job();    // 仮の解
+    RNG rng = RNG();        // 乱数生成器; random number generator
 
 public:
     /*
@@ -404,7 +399,7 @@ public:
     void select_order() {
         // officeからのマンハッタン距離が近そうな上位50件を受け付ける．
         // fromだけ,toだけが近いものを排除するために，遠すぎる座標に対してペナルティを課している
-        const int threshold = 250;
+        const int threshold = 300;
         // manhattan_dist[id] -> (from+to dist, id)
         std::vector<std::pair<int, int>> manhattan_dist;
         for (int id = 0; id < data.ALL_ORDER_NUM; id++) {
@@ -425,49 +420,70 @@ public:
     }
 
     void build_init_solution() {
-        // 初期解の作成
-        // 中心からの角度[rad]が小さい順にfrom->toの順に回る．
-        // pop(degs) -> min({deg, id})
-        std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>> from_degs, to_degs;
-        for (int i = 0; i < data.ORDER_NUM; i++) {
-            int id = best_job.orders_id[i];
-            from_degs.push(std::make_pair(
-                get_rad_by_order(Order(id, Dest::from)),
-                id));
-            to_degs.push(std::make_pair(
-                get_rad_by_order(Order(id, Dest::to)),
-                id));
+        // 初期解の作成 - 最近近傍法(from/to混合)
+        // 後の処理のため，一旦適当にtourを埋める
+        int tour_index = 1;
+        for (const int& id : best_job.orders_id) {
+            best_job.set_order(tour_index, Order(id, Dest::from));
+            best_job.set_order(tour_index + 1, Order(id, Dest::to));
+            tour_index += 2;
         }
-        int tour_index = 1;  // tour index
-        while (!from_degs.empty()) {
-            auto [deg, id] = from_degs.top();  // c++17以降で使えるunpack方法．c++14以前ならstd::tie()を使う
-            from_degs.pop();
-            best_job.set_order(tour_index++, Order(id, Dest::from));
-        }
-        while (!to_degs.empty()) {
-            auto [deg, id] = to_degs.top();
-            to_degs.pop();
-            best_job.set_order(tour_index++, Order(id, Dest::to));
+        std::multiset<int> from_done_id;
+        // tour[i] (1<=i<=TOUR_LEN-2) に最も近いtour[j] (2<=j<=TOUR_LEN-1, i<j) を見つけて，tour[i+1]=tour[j]とする
+        for (int i = 1; i < data.TOUR_LEN - 2; i++) {
+            Order order_i = best_job.tour[i];
+            int min_dist = std::numeric_limits<int>::max();
+            int min_dist_j = i + 1;
+            for (int j = i + 1; j < data.TOUR_LEN - 1; j++) {
+                Order order_j = best_job.tour[j];
+                if ((order_j.dest == Dest::to) &&
+                    (from_done_id.find(order_j.id) == from_done_id.end())) {
+                    continue;
+                }
+                int dist_ = get_dist_by_point(
+                    get_point_by_order(order_i),
+                    get_point_by_order(order_j));
+                if (dist_ < min_dist) {
+                    min_dist = dist_;
+                    min_dist_j = j;
+                }
+            }
+            best_job.swap(i + 1, min_dist_j);
+            if (best_job.tour[i + 1].dest == Dest::from) {
+                from_done_id.insert(best_job.tour[i + 1].id);
+            }
         }
         best_job.obj = calc_obj(best_job);
+        print();  // DEBUG:
         return;
     }
 
     void simulated_annealing() {
         // 焼きなまし法
-        // 焼きなましのパラメータ → 温度;temperature
-        double max_temp;  // TODO: 求める
-        double min_temp;
-        cur_job.set_copy(best_job);  // init
+        // パラメータ → 温度;temperature
+        cur_job.set_copy(best_job);              // init
+        double min_temp = 1.0, max_temp = 50.0;  // DEBUG:
         while (timer.check_time_limit()) {
-            // 幾何冷却スケジューリング
-            // double _time = double(timer.get_elapsed_time()) / timer.get_time_limit();
-            // double temp = pow(max_temp, 1.0 - _time) * pow(min_temp, _time);
-            double temp = 0.0;  // DEBUG:
-            nbhd_search(temp);
+            // 温度の更新 (幾何冷却スケジューリング)
+            // time limitの少し(100msec)前に収束するように設定
+            double time_ = double(timer.get_elapsed_time()) / (timer.TIME_LIMIT - 100.0);
+            double temp = pow(max_temp, 1.0 - time_) * pow(min_temp, time_);
+            /*
+            近傍探索 (neighborhood search)
+            近傍を「insert処理またはswap処理を実施した状態」と定義する
+            insert処理，swap処理共に，順序関係が壊れない場合にのみ実施する
+            ただし，スコアが改悪した場合でも一定確率で採用する(焼きなましによって多様性を出したい)
+            */
+            if (rng.rand() < 0.50) {
+                insert_nbhd_search(temp);
+            } else {
+                swap_nbhd_search(temp);
+            }
             if (cur_job.obj < best_job.obj) {
                 best_job.set_copy(cur_job);
                 print();
+            } else {
+                cur_job.set_copy(best_job);  // reset
             }
         }
         return;
@@ -527,22 +543,6 @@ private:
         }
     }
 
-    double get_rad_by_order(const Order& order) {
-        // orderの座標ベクトル(point)が中心(400, 400)を原点としてx軸となす角rad=[-pi,pi]を返す
-        Point p = get_point_by_order(order);
-        // 中心(400,400)を原点とみなすために全ての点を-400,-400する
-        p.x -= 400, p.y -= 400;
-        // atan2(y, x) = arc tan(y/x) = theta[rad]. theta=[-pi,pi]
-        return atan2(double(p.y), double(p.x));
-    }
-
-    double get_rad_diff(const double& p_rad, const double& q_rad) const {
-        // p[rad]とq[rad]のなす角[0,pi]を返す
-        // p,q共に値域は[-pi,pi]
-        // TODO: 合ってる？
-        return std::min(abs(p_rad - q_rad), 2 * PI - (p_rad - q_rad));
-    }
-
     int calc_obj(const Job& one_job) {
         // objective valueを計算して返す
         int obj = 0;
@@ -554,17 +554,11 @@ private:
         return obj;
     }
 
-    void nbhd_search(const double& temp) {
-        // 近傍探索 (neighborhood search)
-        /*
-        近傍を「insert処理またはswap処理を一回実施した状態」と定義する
-        insert処理 <=def=> tour[i]をtour[j]にinsertする．(j<i)
-        swap処理 <=def=> tour[i]とtour[j]をswapする
-        insert処理，swap処理共に，順序関係が壊れない場合にのみ実施する
-        ただし，スコアが改悪した場合でも一定確率で採用する(焼きなましによって多様性を出したい)
-        */
+    void insert_nbhd_search(const double& temp) {
+        // insert近傍探索 (insert neighborhood search)
+        // insert処理 <=def=> tour[i]をtour[j]の場所にinsertする．(j<i)
 
-        std::vector<std::pair<Order, Order>> order_pairs;  // 近傍を全探索する時に使う
+        static std::vector<std::pair<Order, Order>> order_pairs;  // 近傍を全探索する時に使う
         for (const int& id_i : cur_job.orders_id) {
             for (const int& id_j : cur_job.orders_id) {
                 if (id_i == id_j) {
@@ -585,13 +579,10 @@ private:
             }
         }
 
-        const double RAD_EPS = PI / 6.0;   // 逆走の許容値．pi/6[rad]=30[deg]までなら逆走を許す
-        int insert_cnt = 0, swap_cnt = 0;  // DEBUG:処理回数のメモ
-
-        const int T = int(order_pairs.size());
+        int insert_cnt = 0;                            // DEBUG:処理回数のメモ
+        static const int T = int(order_pairs.size());  // insertの試行回数
         for (int t = 0; t < T; t++) {
-            // for (const auto& [order_i, order_j] : order_pairs) {
-            auto [order_i, order_j] = order_pairs[xs_random.randrange(0, T)];
+            auto [order_i, order_j] = order_pairs[rng.randrange(0, T)];
             assert(order_i.id != order_j.id);
             int i = cur_job.get_index_by_order(order_i);
             int j = cur_job.get_index_by_order(order_j);
@@ -604,82 +595,76 @@ private:
                 // 端っこはダメ
                 continue;
             }
-            // if (false) {  // DEBUG:
-            if (xs_random.rand() < 0.95) {  // 確率でinsert．swapを選択する
-                // insert近傍
-                if ((order_i.dest == Dest::to) &&
-                    (j < cur_job.get_index_by_order(Order(order_i.id, Dest::from)))) {
-                    // insertして順序関係を満たさなくなるならダメ
-                    continue;
-                }
-                if ((RAD_EPS < get_rad_diff(get_rad_by_order(order_j), get_rad_by_order(order_i))) ||
-                    (RAD_EPS < get_rad_diff(get_rad_by_order(order_i), get_rad_by_order(cur_job.tour[j + 1])))) {
-                    // 角度が離れすぎると良くない?
-                    continue;
-                }
-                Point j_point = get_point_by_order(order_j);
-                Point next_j_point = get_point_by_order(cur_job.tour[j + 1]);
-                Point prev_i_point = get_point_by_order(cur_job.tour[i - 1]);
-                Point i_point = get_point_by_order(order_i);
-                Point next_i_point = get_point_by_order(cur_job.tour[i + 1]);
-                int cur_dist = get_dist_by_point(j_point, next_j_point) +
-                               get_dist_by_point(prev_i_point, i_point) +
-                               get_dist_by_point(i_point, next_i_point);
-                int new_dist = get_dist_by_point(j_point, i_point) +
-                               get_dist_by_point(i_point, prev_i_point) +
-                               get_dist_by_point(prev_i_point, next_i_point);
-                int delta = new_dist - cur_dist;
-                if (delta < 0) {
-                    // if ((delta < 0) || (xs_random.rand() < exp(-delta / temp))) {
-                    // スコアが改善する or 一定確率 でこの近傍に移動
-                    cur_job.insert(j + 1, order_i);
-                    insert_cnt++;
-                    // cur_job.obj = calc_obj(cur_job);
-                    // return;
-                }
-            } else {
-                // swap近傍
-                if ((order_i.dest == Dest::to) &&
-                    (j < cur_job.get_index_by_order(Order(order_i.id, Dest::from)))) {
-                    // iは前に移動する
-                    // swapしてi.fromとi.toが順序関係を満たさなくなるならダメ
-                    continue;
-                }
-                if ((order_j.dest == Dest::from) &&
-                    (cur_job.get_index_by_order(Order(order_j.id, Dest::to)) < i)) {
-                    // jは後ろに移動する
-                    // swapしてj.fromとj.toが順序関係を満たさなくなるならダメ
-                    continue;
-                }
-                Point prev_j_point = get_point_by_order(cur_job.tour[j - 1]);
-                Point j_point = get_point_by_order(order_j);
-                Point next_j_point = get_point_by_order(cur_job.tour[j + 1]);
-                Point prev_i_point = get_point_by_order(cur_job.tour[i - 1]);
-                Point i_point = get_point_by_order(order_i);
-                Point next_i_point = get_point_by_order(cur_job.tour[i + 1]);
-                int cur_dist = get_dist_by_point(prev_j_point, j_point) +
-                               get_dist_by_point(j_point, next_j_point) +
-                               get_dist_by_point(prev_i_point, i_point) +
-                               get_dist_by_point(i_point, next_i_point);
-                int new_dist = get_dist_by_point(prev_j_point, i_point) +
-                               get_dist_by_point(i_point, next_j_point) +
-                               get_dist_by_point(prev_i_point, j_point) +
-                               get_dist_by_point(j_point, next_i_point);
-                int delta = new_dist - cur_dist;
-                if (delta < 0) {  // DEBUG:
-                    // if ((delta < 0) || (xs_random.rand() < exp(-delta / temp))) {
-                    // スコアが改善する or 一定確率 でこの近傍に移動
-                    cur_job.swap(i, j);
-                    swap_cnt++;
-                    // cur_job.obj = calc_obj(cur_job);
-                    // return;
-                }
+            // insert近傍
+            if ((order_i.dest == Dest::to) &&
+                (j < cur_job.get_index_by_order(Order(order_i.id, Dest::from)))) {
+                // insertして順序関係を満たさなくなるならダメ
+                continue;
+            }
+            Point j_point = get_point_by_order(order_j);
+            Point next_j_point = get_point_by_order(cur_job.tour[j + 1]);
+            Point prev_i_point = get_point_by_order(cur_job.tour[i - 1]);
+            Point i_point = get_point_by_order(order_i);
+            Point next_i_point = get_point_by_order(cur_job.tour[i + 1]);
+            int cur_dist = get_dist_by_point(j_point, next_j_point) +
+                           get_dist_by_point(prev_i_point, i_point) +
+                           get_dist_by_point(i_point, next_i_point);
+            int new_dist = get_dist_by_point(j_point, i_point) +
+                           get_dist_by_point(i_point, prev_i_point) +
+                           get_dist_by_point(prev_i_point, next_i_point);
+            int delta = new_dist - cur_dist;
+            if ((delta < 0) || (rng.rand() < exp(-delta / temp))) {
+                // スコアが改善する or 一定確率 でこの近傍に移動
+                cur_job.insert(j + 1, order_i);
+                // cur_job.obj += delta;
+                insert_cnt++;
             }
         }
         cur_job.obj = calc_obj(cur_job);
         if (LOCAL) {
-            cout << "insert/swap cnt:" << insert_cnt << "/" << swap_cnt << endl;
-            cout << "best/cur obj:" << best_job.obj << "/" << cur_job.obj << endl;
+            cout << "insert cnt:" << insert_cnt << endl;
+            cout << "\tbest/cur obj:" << best_job.obj << "/" << cur_job.obj << endl;
+        }
+        return;
+    }
+
+    void swap_nbhd_search(const double& temp) {
+        // swap近傍探索 (swap neighborhood search)
+        // swap処理 <=def=> tour[i]とtour[i+1]をswapする
+        // TODO: tour[i]とtour[j]のswapも追加する？
+
+        int swap_cnt = 0;                    // DEBUG:処理回数のメモ
+        static const int T = data.TOUR_LEN;  // swapの試行回数
+        for (int t = 0; t < T; t++) {
+            int i = rng.randrange(2, data.TOUR_LEN - 2);
+            // swap近傍
+            if ((cur_job.tour[i].id == cur_job.tour[i + 1].id) &&
+                (cur_job.tour[i].dest == Dest::from) && (cur_job.tour[i + 1].dest == Dest::to)) {
+                // swapしてi.fromとi.toが順序関係を満たさなくなるならダメ
+                continue;
+            }
+            Point prev_i_point = get_point_by_order(cur_job.tour[i - 1]);
+            Point i_point = get_point_by_order(cur_job.tour[i]);
+            Point next_i_point = get_point_by_order(cur_job.tour[i + 1]);
+            Point next_next_i_point = get_point_by_order(cur_job.tour[i + 2]);
+            int cur_dist = get_dist_by_point(prev_i_point, i_point) +
+                           get_dist_by_point(i_point, next_i_point) +
+                           get_dist_by_point(next_i_point, next_next_i_point);
+            int new_dist = get_dist_by_point(prev_i_point, next_i_point) +
+                           get_dist_by_point(next_i_point, i_point) +
+                           get_dist_by_point(i_point, next_next_i_point);
+            int delta = new_dist - cur_dist;
+            if ((delta < 0) || (rng.rand() < exp(-delta / temp))) {
+                // スコアが改善する or 一定確率 でこの近傍に移動
+                cur_job.swap(i, i + 1);
+                // cur_job.obj += delta;
+                swap_cnt++;
+            }
+        }
+        cur_job.obj = calc_obj(cur_job);
+        if (LOCAL) {
+            cout << "swap cnt:" << swap_cnt << endl;
+            cout << "\tbest/cur obj:" << best_job.obj << "/" << cur_job.obj << endl;
         }
         return;
     }
@@ -693,7 +678,6 @@ int main() {
     Solver solver;
     solver.select_order();
     solver.build_init_solution();
-    solver.print();
     solver.simulated_annealing();
     solver.print();
     std::cerr << solver.get_current_score() << endl;  // pythonスクリプトによるスコア計算用
