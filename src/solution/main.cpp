@@ -158,43 +158,36 @@ void printf(const T& iter_, const std::string& info_ = "", const std::string& se
     writer::print(iter_, sep_, "");
     std::cout << "}" << std::endl;
 }
-/* print initialize list (init_list, msg="", sep=",") */
-template <typename T>
-void printil(const std::initializer_list<T>& iter_, const std::string& info_ = "", const std::string& sep_ = ",") {
-    std::cout << info_ << ":{";
-    writer::print(iter_, sep_, "");
-    std::cout << "}" << std::endl;
-}
 }  // namespace writer
 
 // RNG; random number generator; 乱数生成器
 struct RNG {
 private:
-    std::uint64_t x = 123456789;
-    std::uint64_t y = 362436069;
-    std::uint64_t z = 521288629;
-    std::uint64_t w = 88675123;
-    std::uint32_t max_ = std::numeric_limits<std::uint32_t>::max();
-    std::uint32_t min_ = std::numeric_limits<std::uint32_t>::min();
+    std::uint32_t x = 123456789;
+    std::uint32_t y = 362436069;
+    std::uint32_t z = 521288629;
+    std::uint32_t w = 88675123;
+    const std::uint32_t max_ = std::numeric_limits<std::uint32_t>::max();
+    const std::uint32_t min_ = std::numeric_limits<std::uint32_t>::min();
 
 public:
     RNG() {}
 
-    double rand() {
-        // [0,1)の(double)numberを返す
+    std::double_t rand() {
+        // [0,1)の(std::double_t)numberを返す
         // min-max normalization(正規化)
-        return double(xorshift() - min_) / (max_ - min_);
+        return std::double_t(xorshift() - min_) / (max_ - min_);
     }
 
-    double randrange(const int& l, const int& r) {
-        // [l,r)の(double)numberを返す
+    std::double_t randrange(const int& l, const int& r) {
+        // [l,r)の(std::double_t)numberを返す
         return l + rand() * (r - l);
     }
 
 private:
     std::uint32_t xorshift() {
         // XorShift Algorithm
-        // [0,??]の整数を返す
+        // [0,??)の整数を返す
         std::uint32_t t = (x ^ (x << 11));
         x = y;
         y = z;
@@ -326,8 +319,10 @@ public:
     int get_index_by_order(const Order& order) const {
         // あるorderのtour内の順番(index)を返す
         if (order.dest == Dest::from) {
+            assert(from_id_index[order.id] != -1);
             return from_id_index[order.id];
         } else if (order.dest == Dest::to) {
+            assert(to_id_index[order.id] != -1);
             return to_id_index[order.id];
         } else {
             return -1;  // office
@@ -466,13 +461,14 @@ public:
         cur_job.set_copy(best_job);  // init
         // 温度;temperature パラメータの設定
         // insertとswap searchを一回ずつ回してdeltaのminとaveを求めたのをハードコーディングしてる
-        double min_temp = 1.0, max_temp = 50.0;
+        // std::double_t min_temp = 1.0, max_temp = 50.0;
+        std::double_t min_temp = 3.0, max_temp = 300.0;
         while (timer.check_time_limit()) {
             // 温度の更新 (幾何冷却スケジューリング)
             // time_ = [0,1]
-            double time_ = double(timer.get_elapsed_time()) / (timer.TIME_LIMIT);
+            std::double_t time_ = std::double_t(timer.get_elapsed_time()) / (timer.TIME_LIMIT);
             // temp = [min_temp,max_temp]
-            double temp = pow(max_temp, 1.0 - time_) * pow(min_temp, time_);
+            std::double_t temp = pow(max_temp, 1.0 - time_) * pow(min_temp, time_);
             /*
             近傍探索 (neighborhood search)
             近傍を「insert処理またはswap処理を実施した状態」と定義する
@@ -480,7 +476,7 @@ public:
             ただし，スコアが改悪した場合でも一定確率で採用する(焼きなましによって多様性を出したい)
             */
             // TODO: insertとswapの比率どうしよう？これも温度によって変えても良いかも
-            // FIXME: nbhdらへんでバグってる(AtCoderに投げると20caseくらいWAが出た)．多分どこかの添え字ミス
+            // if (false) {  // DEBUG:
             if (rng.rand() < 0.50) {
                 insert_nbhd_search(temp);
             } else {
@@ -557,18 +553,18 @@ private:
         return obj;
     }
 
-    double get_current_score() {
+    std::double_t get_current_score() {
         return (1e8 / (1000.0 + calc_obj(best_job)));
     }
 
-    void insert_nbhd_search(const double& temp) {
+    void insert_nbhd_search(const std::double_t& temp) {
         // insert近傍探索 (insert neighborhood search)
         // insert処理 <=def=> tour[i]をtour[j+1]の場所にinsertする．(j<i)
 
-        int insert_cnt = 0;  // DEBUG:処理回数のメモ
-        const int T = 100;   // insertの試行回数
-        for (int t = 0; t < T; t++) {
-            const int j = rng.randrange(2, data.TOUR_LEN - 3);
+        int insert_cnt = 0;      // DEBUG:処理回数のメモ
+        const int try_num = 50;  // insertの試行回数
+        for (int t = 0; t < try_num; t++) {
+            const int j = rng.randrange(2, data.TOUR_LEN - 5);
             const int i = rng.randrange(j + 2, data.TOUR_LEN - 3);
             Order order_i = cur_job.tour[i];
             Order order_j = cur_job.tour[j];
@@ -592,7 +588,6 @@ private:
             if ((delta < 0) || (rng.rand() < exp(-delta / temp))) {
                 // スコアが改善する or 一定確率 でこの近傍に移動
                 cur_job.insert(j + 1, order_i);
-                // cur_job.obj += delta;
                 insert_cnt++;
             }
         }
@@ -604,28 +599,28 @@ private:
         return;
     }
 
-    void swap_nbhd_search(const double& temp) {
+    void swap_nbhd_search(const std::double_t& temp) {
         // swap近傍探索 (swap neighborhood search)
         // swap処理 <=def=> tour[i]とtour[j]をswapする
 
         // tabu list (将棋の千日手的なやつを防ぐ)
-        // swapした(j,i)をtabuリストに追加する
+        // swapした(i,j)をtabuリストに追加する
         // swapする前に(i,j)がtabuリストにあれば処理をskip
         std::set<std::pair<int, int>> tabu;
 
         int swap_i_cnt = 0, swap_ij_cnt = 0;  // DEBUG:処理回数のメモ
-        const int T = 100;                    // swapの試行回数
-        for (int t = 0; t < T; t++) {
+        const int try_num = 50;               // swapの試行回数
+        for (int t = 0; t < try_num; t++) {
             {  // 以下tour[i]とtour[i+1]のswap
                 bool conditions_passed = true;
-                const int i = rng.randrange(2, data.TOUR_LEN - 2);
+                const int i = rng.randrange(2, data.TOUR_LEN - 3);
                 if (tabu.find(std::make_pair(i, i + 1)) != tabu.end()) {
                     // すでに(i,i+1)のswapは確認済み
                     conditions_passed = false;
                 }
-                if ((cur_job.tour[i].id == cur_job.tour[i + 1].id) &&
-                    (cur_job.tour[i].dest == Dest::from) && (cur_job.tour[i + 1].dest == Dest::to)) {
+                if (cur_job.tour[i].id == cur_job.tour[i + 1].id) {
                     // swapしてi.fromとi.toが順序関係を満たさなくなるならダメ
+                    // fromとtoの入れ替えは絶対無理
                     conditions_passed = false;
                 }
                 Point prev_i_point = get_point_by_order(cur_job.tour[i - 1]);
@@ -639,16 +634,20 @@ private:
                                      get_dist_by_point(next_i_point, i_point) +
                                      get_dist_by_point(i_point, next_next_i_point);
                 const int delta = new_dist - cur_dist;
-                if (conditions_passed && ((delta < 0) || (rng.rand() < exp(-delta / temp)))) {
+                if (conditions_passed &&
+                    ((delta < 0) || (rng.rand() < exp(-delta / temp)))) {
                     // スコアが改善する or 一定確率 でこの近傍に移動
                     cur_job.swap(i, i + 1);
                     tabu.insert(std::make_pair(i, i + 1));
-                    // cur_job.obj += delta;
                     swap_i_cnt++;
+
+                    // test
+                    assert(cur_job.get_index_by_order(Order(cur_job.tour[i].id, Dest::from)) < cur_job.get_index_by_order(Order(cur_job.tour[i].id, Dest::to)));
+                    assert(cur_job.get_index_by_order(Order(cur_job.tour[i + 1].id, Dest::from)) < cur_job.get_index_by_order(Order(cur_job.tour[i + 1].id, Dest::to)));
                 }
             }
             {  // 以下tour[i]とtour[j]のswap (i<j)
-                const int i = rng.randrange(2, data.TOUR_LEN - 2);
+                const int i = rng.randrange(2, data.TOUR_LEN - 4);
                 const int j = rng.randrange(i + 2, data.TOUR_LEN - 2);
                 if (tabu.find(std::make_pair(i, j)) != tabu.end()) {
                     // すでに(i,j)のswapは確認済み
@@ -656,6 +655,11 @@ private:
                 }
                 Order order_i = cur_job.tour[i];
                 Order order_j = cur_job.tour[j];
+                if (order_i.id == order_j.id) {
+                    // swapしてi.fromとi.toが順序関係を満たさなくなるならダメ
+                    // fromとto交換するのは無理に決まってる
+                    continue;
+                }
                 if ((order_i.dest == Dest::from) &&
                     (cur_job.get_index_by_order(Order(order_i.id, Dest::to)) < j)) {
                     // iは後ろに移動する
@@ -687,8 +691,11 @@ private:
                     // スコアが改善する or 一定確率 でこの近傍に移動
                     cur_job.swap(i, j);
                     tabu.insert(std::make_pair(i, j));
-                    // cur_job.obj += delta;
                     swap_ij_cnt++;
+
+                    // test
+                    assert(cur_job.get_index_by_order(Order(order_i.id, Dest::from)) < cur_job.get_index_by_order(Order(order_i.id, Dest::to)));
+                    assert(cur_job.get_index_by_order(Order(order_j.id, Dest::from)) < cur_job.get_index_by_order(Order(order_j.id, Dest::to)));
                 }
             }
         }

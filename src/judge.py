@@ -108,19 +108,23 @@ def main(args: argparse.Namespace) -> None:
                 stderr=subprocess.PIPE,
             )
         outputs = res.stdout.strip().split("\n")[-2:]  # 最後の出力だけを抜き出し
+        if res.stderr:
+            print("std error:", res.stderr)
+            break
         score = judge(input_file_path, outputs)
         if score == -1:
             invalid_cases.append(test_case)
             scores.append(0)
-            break  # DEBUG:
         else:
             scores.append(score)
 
     print("\n\n[result]")
+    print(f"status: {len(scores) - len(invalid_cases)}AC / {len(invalid_cases)}WA")
+    if invalid_cases:
+        print(f"invalid cases: {invalid_cases}")
     print(f"total score: {sum(scores):,} / {10**5 * len(scores):,}")
     print(f"max score: {max(scores):,} at {scores.index(max(scores))}")
     print(f"min score: {min(scores):,} at {scores.index(min(scores))}")
-    print(f"invalid cases:{invalid_cases}")
     return
 
 
